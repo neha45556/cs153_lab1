@@ -7,6 +7,7 @@
 #include "proc.h"
 #include "spinlock.h"
 
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -88,7 +89,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-
+  p->priority = 15;
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -111,7 +112,8 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
-
+	
+ // p->priority = 15;
   return p;
 }
 
@@ -364,37 +366,85 @@ int waitpid(int pid, int *status, int options)
 void
 scheduler(void)
 {
+ 
   struct proc *p;
   struct cpu *c = mycpu();
-  c->proc = 0;
-  
+  c->proc = 0; 
+  int min = 31;
   for(;;){
     // Enable interrupts on this processor.
     sti();
-
-    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+    min = 31;
+   
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
-
+	if(p->state != RUNNABLE){
+		continue;
+	}
+	 if(p->priority < min){
+		min = p -> priority;
+	}
+    
+     }
+    // Loop over process table looking for process to run.
+    //acquire(&ptable.lock);
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE){	
+        continue; 
+	}
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
-
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
-
+      	 if(min == p -> priority){
+      	  c->proc = p;
+     	  switchuvm(p);
+      	  p->state = RUNNING;
+     	  
+	  if(p->priority > 30){
+		p->priority = 31;
+	  }
+	  else{
+		p->priority = p -> priority + 1;
+	  }  
+     	  swtch(&(c->scheduler), p->context);
+     	  switchkvm();
+	
       // Process is done running for now.
       // It should have changed its p->state before coming back.
-      c->proc = 0;
-    }
+     	  c->proc = 0;
+	 //  if(p->priority > 30){
+	//	p->priority = 31;
+	  //  }
+	  //  else{ 
+ 	 //	 p->priority = p->priority + 1; 
+	  // }
+	}
+	
+	else if(min < p -> priority){
+	    p->priority = p->priority - 1;
+		if(p -> priority <  0){
+	    	    p->priority = 0;
+		}
+	}    
+    } 
     release(&ptable.lock);
-
   }
+}
+
+
+int getpriority(void){
+	//struct proc *currproc = myproc();
+	return myproc()->priority;
+}
+
+int setpriority(int prior){
+	//acquire(&ptable.lock);
+	struct proc *currproc = myproc();
+	acquire(&ptable.lock);
+	currproc -> priority = prior;
+	release(&ptable.lock); 
+	yield();
+	return 0; 
 }
 
 // Enter scheduler.  Must hold only ptable.lock
@@ -438,6 +488,7 @@ yield(void)
 void
 forkret(void)
 {
+  
   static int first = 1;
   // Still holding ptable.lock from scheduler.
   release(&ptable.lock);
